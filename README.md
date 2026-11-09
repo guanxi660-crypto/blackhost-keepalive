@@ -1,40 +1,76 @@
 # BlackHost 免费服保活
 
-## 窗口对齐强制重启
+## 本地监控
 
-当前到期 `12:28:45Z`、剩余 3h15m，续期窗口在剩不到 2h 时开启（`10:28:45Z`，还有 74 分钟）。
-
-Actions 定时为 `28 */6 * * *`（UTC :28 每 6 小时），每次落在窗口开点上：
-
-- PAT 读到期 → 停服到 `stopped` → 开机到 `running`
-- 窗口内续期 +8h 下一个窗口就是 +6h，所以不是 +8h
-
-手动跑一次：
+1. 安装依赖：
 
 ```bash
-BH_PAT=bh_pat_xxx PYTHONUTF8=1 python3 github-action/power_cycle.py
+python3 -m pip install requests
 ```
 
-通过标准：日志出现 `✅ 已停`、`✅ 已运行`，最后 `status=ready`。
+2. 在项目目录新建 `.env`：
 
-## GitHub Actions 用法
-
-工作流位于 `.github/workflows/blackhost-keepalive.yml`，定时执行：
-
-```yaml
-- cron: "28 */6 * * *"
+```bash
+BH_PAT=bh_pat_xxx
+BH_TG_TOKEN=你的 Bot Token
+BH_TG_CHAT=你的 Chat ID
 ```
 
-仓库 `Settings → Secrets and variables → Actions` 配置：
+3. 直接运行：
+
+```bash
+PYTHONUTF8=1 python3 blackhost-keepalive.py --monitor
+```
+
+默认轮询 3 小时，剩余不足 7 小时或已挂起时发送 Telegram 告警。需要常驻可用 cron 定时拉起 `--check`，或自行编写 systemd 单元。
+
+## 手动续期
+
+告警后在浏览器里操作一次：
+
+1. 打开 `https://dash.blackhost.pl/game/4dbfac39`
+2. 点击续期按钮，过完 Cloudflare Turnstile
+3. 打开浏览器开发者工具 → Network，找到 `POST /api/v1/servers/game/free/renew`，复制请求体里的 `turnstileToken`
+4. 在服务器执行：
+
+```bash
+python3 blackhost-keepalive.py --renew \
+  --har "/path/to/dash.blackhost.pl_Archive.har" \
+  --turnstile "你复制的 turnstileToken"
+```
+
+续期后脚本会立即用 PAT 复查新的到期时间。
+
+Cookie 和 token 只用于这一次提交，不写入日志。
+
+## GitHub Actions 强制重启
+
+Actions 版位于 `github-action/`，工作流位于 `.github/workflows/blackhost-keepalive.yml`，定时触发停止 → 开始流程。
+
+仓库 `Settings → Secrets and variables → Actions` 需要配置：
 
 | Secret | 内容 |
 |--------|------|
 | `BH_PAT` | BlackHost PAT（`bh_pat_...`） |
 | `BH_TG_TOKEN` / `BH_TG_CHAT` | Telegram 通知（可选） |
 
-详细说明见 [github-action/README.md](./github-action/README.md)。
+详细配置见 [github-action/README.md](./github-action/README.md)。
+
+## 常用命令
+
+```bash
+# 单轮检查
+python3 blackhost-keepalive.py --check
+
+# 常驻监控
+python3 blackhost-keepalive.py --monitor
+
+# 强制停止/开始
+BH_PAT=bh_pat_xxx PYTHONUTF8=1 python3 github-action/power_cycle.py
+```
 
 ## 注意事项
 
-- 停止/开始不会延长到期时间；真正延期要靠 Turnstile 那步。到期前 2 小时内如果重启后仍临近到期，建议手动走一次浏览器续期。
+- 时间算法见 [time.txt](./time.txt)。
+- 停止/开始不会延长到期时间；真正延期要靠 Turnstile 那步。
 - 不要把真实 PAT、Cookie、sing-box 凭证提交到仓库。
