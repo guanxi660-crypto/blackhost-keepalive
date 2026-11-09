@@ -106,9 +106,15 @@ def do_browser_renew():
     if not cookie_raw:
         raise RuntimeError("缺少 BH_COOKIE_HEADER（GitHub Secrets 放完整 Cookie 头）")
     jar = parse_cookie_header(cookie_raw)
-    need = {"__Secure-better-auth.session_token", "__Secure-better-auth.state"}
-    if not need.issubset(jar):
-        log(f"⚠️ Cookie 头里缺少会话项，实际有：{list(jar.keys())}（含 cf_clearance 绑定出口 IP，Actions 跨机可能失效）")
+    # 只认 dash.blackhost.pl 的 Better-Auth 会话；别的站（next-auth / _lr_* / cto_bundle 等广告站）
+    # 的 cookie 塞进来会表现为“页面骨架一直在加载 / 打回登录页”，报错必须点明
+    if "__Secure-better-auth.session_token" not in jar:
+        raise RuntimeError(
+            "BH_COOKIE_HEADER 不是 dash.blackhost.pl 的会话：缺少 __Secure-better-auth.session_token。"
+            f"实际拿到的 cookie 名：{sorted(jar.keys())}。"
+            "请从浏览器访问 https://dash.blackhost.pl 后复制该站请求的完整 Cookie 头（应包含 "
+            "cf_clearance / NEXT_LOCALE / __Secure-better-auth.state / __Secure-better-auth.session_token）"
+        )
 
     try:
         from playwright.sync_api import sync_playwright
@@ -165,17 +171,40 @@ def do_browser_renew():
 
         log("打开面板页")
         page.goto(f"{DASH_BASE}/game/{SERVID_UNIQUE}", wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(5000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=25000)
+        except Exception:
+            pass
         page.screenshot(path="artifacts/before.png", full_page=False)
 
-        # 找续期按钮：bundle 文案 `Przedłuż o 8h`（eZ 组件）
-        btn = page.get_by_role("button", name=RENEW_BTN_TEXT)
-        if btn.count() == 0:
-            # 兜底文本搜索（波兰语/英文/中文都留一个）
-            btn = page.locator("text=Przedłuż o 8h")
-        if btn.count() == 0:
-            page.screenshot(path="artifacts/error_no_renew_btn.png")
-            raise RuntimeError("没找到续期按钮（会话可能已过期被打回登录页，或页面文案变了）。截图见 artifacts/error_no_renew_btn.png")
+        # 会话是否真生效：先直接问一次 get-session（同一套 cookie）
+        try:
+            sess = page.evaluate(
+                "() => fetch('/api/auth/get-session', {credentials:'include'})"
+                ".then(r => r.json()).then(d => (d && d.user) ? (d.user.email || 'user') : '')"
+            )
+            log(f"会话校验：{'已登录 ' + sess if sess else '未登录（cookie 无效或已过期）'}")
+            if not sess:
+                page.screenshot(path="artifacts/error_not_logged_in.png")
+                raise RuntimeError("注入的 cookie 未被接受：get-session 返回空用户，需重新导出 BH_COOKIE_HEADER")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            log(f"会话校验异常（继续尝试点按钮）：{e!r}")
+
+        # 找续期按钮：bundle 文案 `Przedłuż o 8h`（eZ 组件）。SPA 首屏是骨架屏，必须轮询等它渲染
+        btn = None
+        for _ in range(20):
+            cand = page.get_by_role("button", name=RENEW_BTN_TEXT)
+            if cand.count() == 0:
+                cand = page.locator(f"text={RENEW_BTN_TEXT}")
+            if cand.count() > 0:
+                btn = cand
+                break
+            page.wait_for_timeout(1500)
+        if btn is None:
+            page.screenshot(path="artifacts/error_no_renew_btn.png", full_page=True)
+            raise RuntimeError("等了 30 秒没出现续期按钮（页面还在骨架屏或已回登录页）。截图见 artifacts/error_no_renew_btn.png")
         if not btn.first.is_enabled():
             page.screenshot(path="artifacts/error_btn_disabled.png")
             raise RuntimeError("续期按钮 disabled —— 服务端只在剩不到 2 小时才让续期，现在还没到窗口")
@@ -212,9 +241,29 @@ def do_browser_renew():
         submit = page.get_by_role("button", name=SUBMIT_BTN_TEXT)
         if submit.count() == 0:
             submit = page.locator(f"text={SUBMIT_BTN_TEXT}")
-        log("点击提交续期")
-        submit.first.click(timeout=10000)
-        page.wait_for_timeout(6000)
+        if submit.count() == 0:
+            page.screenshot(path="artifacts/error_no_submit_btn.png")
+            raise RuntimeError("弹窗里没有提交按钮 Przedłuż serwer o 8h，弹窗可能没打开")
+
+        # token 在 React state 里，外部读不到；直接点提交，没拿到响应就等一会儿再点，最多 6 次
+        for attempt in range(1, 7):
+            log(f"点击提交续期（第 {attempt} 次）")
+            try:
+                submit.first.click(timeout=10000)
+            except Exception as e:
+                log(f"点击异常：{e!r}")
+            page.wait_for_timeout(5000)
+            if renew_result.get("status"):
+                break
+            # 再试一次点 Turnstile 复选框
+            for frame in page.frames:
+                if "challenges.cloudflare.com" in (frame.url or ""):
+                    try:
+                        frame.locator("input[type='checkbox']").first.click(timeout=3000)
+                    except Exception:
+                        pass
+                    break
+            page.wait_for_timeout(3000)
         page.screenshot(path="artifacts/after.png")
 
         try:
