@@ -28,7 +28,7 @@ PYTHONUTF8=1 python3 blackhost-keepalive.py --monitor
 
 告警后在浏览器里操作一次：
 
-1. 打开 `https://dash.blackhost.pl/game/4dbfac39`
+1. 打开 `https://dash.blackhost.pl/game/<SERVER_ID>`
 2. 点击续期按钮，过完 Cloudflare Turnstile
 3. 打开浏览器开发者工具 → Network，找到 `POST /api/v1/servers/game/free/renew`，复制请求体里的 `turnstileToken`
 4. 在服务器执行：
