@@ -1,17 +1,5 @@
 # BlackHost 免费服保活
 
-`blackhost-keepalive` 用来监控 BlackHost.pl 免费游戏服到期时间、提前告警；续期由真浏览器完成。
-
-## 快速开始
-
-服务器上手动跑一次检查：
-
-```bash
-PYTHONUTF8=1 python3 blackhost-keepalive.py --check
-```
-
-会打印服务器状态、到期时间、剩余时长和实时玩家数。
-
 ## 本地监控
 
 1. 安装依赖：
