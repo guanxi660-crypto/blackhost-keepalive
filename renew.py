@@ -98,10 +98,12 @@ def parse_node_link(link):
     default_port = {"vless": 443, "trojan": 443, "hysteria2": 443, "hy2": 443,
                     "tuic": 443, "anytls": 443, "socks5": 1080, "socks": 1080}.get(scheme, 443)
 
-    def tls_block(sec, sni, fp, q):
+    def tls_block(sec, sni, fp, q, allow_utls=True):
         t = {"enabled": sec in ("tls", "reality"), "server_name": sni,
-             "insecure": q.get("insecure", q.get("allowInsecure", "")) in ("1", "true"),
-             "utls": {"enabled": True, "fingerprint": fp or "chrome"}}
+             "insecure": q.get("insecure", q.get("allowInsecure", "")) in ("1", "true")}
+        # hysteria2/tuic 是 QUIC 系协议，sing-box 不支持 uTLS，塞了直接报 unsupported usage for uTLS
+        if allow_utls:
+            t["utls"] = {"enabled": True, "fingerprint": fp or "chrome"}
         if sec == "reality":
             t["reality"] = {"enabled": True, "public_key": q.get("pbk", ""), "short_id": q.get("sid", "")}
         return t
@@ -163,7 +165,7 @@ def parse_node_link(link):
         return out
 
     if scheme in ("hysteria2", "hy2"):
-        out = {"type": "hysteria2", "server": server, "server_port": port, "tls": tls_block("tls", q.get("sni") or server, fp, q)}
+        out = {"type": "hysteria2", "server": server, "server_port": port, "tls": tls_block("tls", q.get("sni") or server, fp, q, allow_utls=False)}
         if user:
             out["password"] = user
         if q.get("obfs"):
@@ -173,7 +175,7 @@ def parse_node_link(link):
     if scheme == "tuic":
         out = {"type": "tuic", "server": server, "server_port": port, "uuid": user, "password": pwd,
                "congestion_control": q.get("congestion_control", "bbr"), "udp_over_stream": True}
-        out["tls"] = tls_block("tls", q.get("sni") or server, fp, q)
+        out["tls"] = tls_block("tls", q.get("sni") or server, fp, q, allow_utls=False)
         if q.get("alpn"):
             out["tls"]["alpn"] = [q["alpn"]]
         return out
