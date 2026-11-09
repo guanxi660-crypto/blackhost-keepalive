@@ -1,0 +1,35 @@
+{
+  "log": {"level": "info"},
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 18080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy-out",
+      "server": "YOUR_SERVER_IP_OR_DOMAIN",
+      "server_port": 443,
+      "uuid": "YOUR_UUID",
+      "network": "tcp",
+      "tls": {
+        "enabled": true,
+        "server_name": "YOUR_SNI_DOMAIN",
+        "insecure": false
+      },
+      "packet_encoding": "xudp"
+    },
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "rules": [
+      {"ip_cidr": ["127.0.0.0/8"], "outbound": "direct"},
+      {"geosite": ["category-ads-all"], "outbound": "direct"}
+    ],
+    "final": "proxy-out"
+  }
+}

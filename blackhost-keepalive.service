@@ -1,0 +1,20 @@
+[Unit]
+Description=BlackHost free server keepalive monitor
+After=network-online.target
+Wants=network-online.target
+# 防止 PAT 配错时无限重启刷日志
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/root/blackhost-keepalive
+ExecStart=/usr/bin/python3 -u /root/blackhost-keepalive/blackhost-keepalive.py --monitor --every 10800
+Restart=always
+RestartSec=60
+Environment=PYTHONUTF8=1
+EnvironmentFile=/root/blackhost-keepalive/.env
+User=root
+
+[Install]
+WantedBy=multi-user.target
