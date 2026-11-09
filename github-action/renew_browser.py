@@ -277,6 +277,19 @@ def do_browser_renew():
             browser.close()
 
 
+def send_tg(text):
+    token = os.environ.get("BH_TG_TOKEN", "").strip()
+    chat = os.environ.get("BH_TG_CHAT", "").strip()
+    if not token or not chat:
+        return
+    try:
+        import requests as _rq
+        _rq.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                 json={"chat_id": chat, "text": text}, timeout=15)
+    except Exception as e:
+        log(f"TG 发送失败：{e!r}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="无视 2 小时窗口也要跑浏览器（仅调试）")
@@ -287,9 +300,18 @@ def main():
     if not need:
         log("⏭ 还没到 2 小时续期窗口，跳过浏览器")
         return 0
-    ok = do_browser_renew()
+    try:
+        ok = do_browser_renew()
+    except Exception as e:
+        log(f"❌ 浏览器续期异常：{e}")
+        send_tg(f"❌ BlackHost 自动续期失败：{str(e)[:200]}")
+        raise
     # 续期后复查
     info = pat_check()
+    if ok:
+        send_tg(f"✅ BlackHost 自动续期成功，新到期 {info[2].get('active_until')}")
+    else:
+        send_tg(f"❌ BlackHost 自动续期未成功，当前剩余 {fmt_remaining(info[1])}，需手动处理")
     return 0 if ok else 1
 
 

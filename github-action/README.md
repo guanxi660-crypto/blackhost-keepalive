@@ -6,7 +6,7 @@
 
 | 文件 | 作用 |
 |------|------|
-| `.github/workflows/blackhost-keepalive.yml` | `28 */6 * * *` 定时触发 |
+| `.github/workflows/blackhost-keepalive.yml` | `*/15 * * * *` PAT 轮询，到窗口才跑浏览器 |
 | `github-action/renew_browser.py` | PAT 检查 + 浏览器点续期按钮 |
 | `github-action/sing-box.client.example.json` | sing-box 配置模板 |
 
