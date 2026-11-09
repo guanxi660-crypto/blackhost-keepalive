@@ -206,8 +206,19 @@ def do_browser_renew():
             page.screenshot(path="artifacts/error_no_renew_btn.png", full_page=True)
             raise RuntimeError("等了 30 秒没出现续期按钮（页面还在骨架屏或已回登录页）。截图见 artifacts/error_no_renew_btn.png")
         if not btn.first.is_enabled():
-            page.screenshot(path="artifacts/error_btn_disabled.png")
-            raise RuntimeError("续期按钮 disabled —— 服务端只在剩不到 2 小时才让续期，现在还没到窗口")
+            # 6h 跳点会比窗口开点早几秒~几分钟（续期动作耗时 ε），原地等它亮，不跳过
+            log("按钮还没亮（差一点到 2h 窗口），原地等它变可用，最多 12 分钟")
+            deadline = time.time() + 720
+            ok_wait = False
+            while time.time() < deadline:
+                page.wait_for_timeout(15000)
+                if btn.first.is_enabled():
+                    ok_wait = True
+                    log("按钮已亮，进窗口了，继续")
+                    break
+            if not ok_wait:
+                page.screenshot(path="artifacts/error_btn_disabled.png")
+                raise RuntimeError("等了 12 分钟续期按钮仍 disabled —— 窗口没到或被服务端限制")
         log("点击续期按钮")
         btn.first.click()
         page.wait_for_timeout(3000)
@@ -296,7 +307,8 @@ def main():
     a = ap.parse_args()
 
     status, remaining, _ = pat_check()
-    need = (status == "suspended") or (remaining is not None and remaining < 2 * 3600) or a.force
+    # 放宽到 2h10m：6h 跳点会比窗口开点早几秒~几分钟，进浏览器原地等按钮亮，跳点就能全部续上
+    need = (status == "suspended") or (remaining is not None and remaining < 2 * 3600 + 600) or a.force
     if not need:
         log("⏭ 还没到 2 小时续期窗口，跳过浏览器")
         return 0

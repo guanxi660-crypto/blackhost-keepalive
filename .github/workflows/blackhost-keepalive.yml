@@ -1,9 +1,8 @@
 name: blackhost-keepalive
 
-# 6 小时一跳。窗口漂移规律（HAR 实证）：续期时刻 R → 新到期 R+8h → 下一窗口 R+6h；
-# 续期动作本身耗时 ε>0，所以 R = 跳数+ε，下一窗口 = 下一个跳点+ε，固定跳点永远差 ε 秒进不了窗口
-# → 该跳跳过，再下一跳（+12h）时已挂起约 4 小时，检测到 suspended 照样拉浏览器续（挂起态也能 +8h）。
-# 结果：每 12 小时循环一次，其中约 4 小时停机挂起，但永远不会碰到 delete_after，无限续上。
+# 6 小时一跳。窗口漂移律（HAR 实证）：续期时刻 R → 新到期 R+8h（重置满 8h，不叠加）→ 下一窗口 R+6h。
+# 跳点会比窗点早几秒~几分钟（续期动作耗时 ε），脚本进浏览器后原地等按钮亮（最多 12 分钟），
+# 所以每个跳点都能续上：6h 跳 → 全部续上、无挂起、无限 +8h。
 on:
   schedule:
     - cron: "0 */6 * * *"
@@ -18,7 +17,7 @@ on:
 jobs:
   keepalive:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     # GITHUB_TOKEN 默认只读，删运行记录需要 actions:write
     permissions:
       actions: write

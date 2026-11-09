@@ -6,7 +6,7 @@
 
 | 文件 | 作用 |
 |------|------|
-| `.github/workflows/blackhost-keepalive.yml` | `0 */6 * * *` 6 小时一跳，挂起态自动续回 |
+| `.github/workflows/blackhost-keepalive.yml` | `0 */6 * * *` 一跳一续，等窗口亮就点，重置满 8h 无限循环 |
 | `github-action/renew_browser.py` | PAT 检查 + 浏览器点续期按钮 |
 | `github-action/sing-box.client.example.json` | sing-box 配置模板 |
 
