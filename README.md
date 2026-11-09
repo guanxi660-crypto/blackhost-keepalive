@@ -14,25 +14,22 @@
 手动跑一次（强制点按钮）：
 
 ```bash
-BH_PAT=bh_pat_xxx BH_COOKIE_HEADER="Cookie: ..." PYTHONUTF8=1 python3 github-action/renew_browser.py --force
+BH_PAT=bh_pat_xxx BH_COOKIE_HEADER="Cookie: ..." PYTHONUTF8=1 python3 renew.py --force
 ```
 
 通过标准：日志出现 `🎉 续期成功`，`status=ready`。
 
-## GitHub Actions 用法
-
-工作流位于 `.github/workflows/blackhost-keepalive.yml`。
+## Secrets
 
 仓库 `Settings → Secrets and variables → Actions` 配置：
 
 | Secret | 内容 |
 |--------|------|
 | `BH_PAT` | BlackHost PAT（`bh_pat_...`） |
-| `BH_COOKIE_HEADER` | dash 站点完整 Cookie 头 |
-| `SINGBOX_CONFIG_JSON` | sing-box 配置（见 `github-action/sing-box.client.example.json`） |
+| `BH_COOKIE_HEADER` | dash 站点完整 Cookie 头（含 `__Secure-better-auth.session_token`） |
 | `BH_TG_TOKEN` / `BH_TG_CHAT` | Telegram 通知（可选） |
 
-详细配置见 [github-action/README.md](./github-action/README.md)，时间算法见 [time.txt](./time.txt)。
+时间算法见 [time.txt](./time.txt)。
 
 ## 手动续期
 

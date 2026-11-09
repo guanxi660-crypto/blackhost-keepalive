@@ -1,8 +1,7 @@
 name: blackhost-keepalive
 
-# 6 小时一跳。窗口漂移律（HAR 实证）：续期时刻 R → 新到期 R+8h（重置满 8h，不叠加）→ 下一窗口 R+6h。
-# 跳点会比窗点早几秒~几分钟（续期动作耗时 ε），脚本进浏览器后原地等按钮亮（最多 12 分钟），
-# 所以每个跳点都能续上：6h 跳 → 全部续上、无挂起、无限 +8h。
+# 6 小时一跳。点过续期就重置满 8h（不叠加）：跳点早到就在浏览器里等按钮亮，晚到直接点，
+# 每跳都续上 → 无挂起、无限 +8h。
 on:
   schedule:
     - cron: "0 */6 * * *"
@@ -32,55 +31,21 @@ jobs:
 
       - name: Install deps
         run: |
-          pip install -r github-action/requirements.txt
+          pip install requests playwright
           python -m playwright install --with-deps firefox
 
-      - name: Probe sing-box secret
-        env:
-          SINGBOX_CONFIG_JSON: ${{ secrets.SINGBOX_CONFIG_JSON }}
-        run: |
-          if [ -n "$SINGBOX_CONFIG_JSON" ]; then echo "HAS_SINGBOX=true" >> "$GITHUB_ENV"; else echo "HAS_SINGBOX=false" >> "$GITHUB_ENV"; fi
-
-      - name: Install sing-box
-        if: env.HAS_SINGBOX == 'true'
-        run: |
-          mkdir -p /tmp/sing-box
-          curl -fsSL https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz \
-            | tar -xz --strip-components=1 -C /tmp/sing-box
-          /tmp/sing-box/sing-box version
-
-      - name: Start sing-box (local mixed inbound 127.0.0.1:18080)
-        if: env.HAS_SINGBOX == 'true'
-        env:
-          SINGBOX_CONFIG_JSON: ${{ secrets.SINGBOX_CONFIG_JSON }}
-        run: |
-          mkdir -p artifacts
-          printf '%s' "$SINGBOX_CONFIG_JSON" > /tmp/sing-box.json
-          /tmp/sing-box/sing-box run -c /tmp/sing-box.json > artifacts/sing-box.log 2>&1 &
-          sleep 3
-          for i in 1 2 3; do
-            curl -fsSL --max-time 15 -x http://127.0.0.1:18080 https://api.ipify.org > /tmp/proxy_ip.txt && break || sleep 3
-          done
-          if [ -s /tmp/proxy_ip.txt ]; then echo "sing-box exit ip: $(cat /tmp/proxy_ip.txt)"; else echo "proxy probe failed"; cat artifacts/sing-box.log; exit 1; fi
-          echo "BH_PROXY=http://127.0.0.1:18080" >> "$GITHUB_ENV"
-
-      - name: Run keepalive
+      - name: Renew
         env:
           BH_PAT: ${{ secrets.BH_PAT }}
           BH_COOKIE_HEADER: ${{ secrets.BH_COOKIE_HEADER }}
-          BH_PROXY_SECRET: ${{ secrets.BH_PROXY }}
           BH_TG_TOKEN: ${{ secrets.BH_TG_TOKEN }}
           BH_TG_CHAT: ${{ secrets.BH_TG_CHAT }}
         run: |
           mkdir -p artifacts
-          if [ -z "$BH_PROXY" ] && [ -n "$BH_PROXY_SECRET" ]; then
-            export BH_PROXY="$BH_PROXY_SECRET"
-          fi
-          if [ -n "$BH_PROXY" ]; then echo "browser proxy: $BH_PROXY"; else echo "browser proxy: direct"; fi
           if [ "${{ inputs.force }}" = "true" ]; then
-            python github-action/renew_browser.py --force
+            python renew.py --force
           else
-            python github-action/renew_browser.py
+            python renew.py
           fi
 
       - name: Upload artifacts
@@ -91,7 +56,7 @@ jobs:
           path: artifacts/
           if-no-files-found: ignore
 
-      # 只留最近一条运行记录，其余删掉（省 Actions 历史，防堆 96 条/天的 15 分钟轮询）
+      # 只留最近一条运行记录，其余删掉
       - name: Prune old workflow runs
         if: always()
         env:

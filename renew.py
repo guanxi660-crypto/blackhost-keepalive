@@ -1,32 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""GitHub Actions 版：真浏览器续期入口（BlackHost 免费服）。
+"""BlackHost 免费服自动续期：真浏览器点按钮（GitHub Actions 每 6 小时跑一次）。
 
-两阶段结构：
-  1) PAT 只读检查（requests）：算剩余时间。只有剩余 < 2 小时（或已挂起）才进入浏览器阶段，
-     因为服务端规定「剩不到 2 小时才能续期」（bundle 文案：`Przedłużenie będzie dostępne,
-     gdy do wygaśnięcia sesji pozostaną mniej niż 2 godziny.`）。
-  2) 真浏览器续期（Playwright）：注入 Better-Auth 会话，打开 /game/4dbfac39，
-     点 `Przedłuż o 8h` 打开弹窗（标题 `Przedłuż darmowy serwer`），等 Turnstile 回调，
-     点提交 `Przedłuż serwer o 8h`，监听 POST /api/v1/servers/game/free/renew 的响应。
+点过续期就重置：无论剩余多少，倒计时直接回到满 8h（不叠加）。
+窗口 = 到期前 2h。PAT 先查剩余，剩 <2h10m（含挂起）才拉浏览器：
+  - 跳点比窗点早到几秒~几分钟 → 原地等按钮亮（最多 12 分钟）再点
+  - 跳点晚到 → 按钮已亮，直接点
+必须真浏览器：PAT 调 renew 403、空 turnstileToken 400，token 只能在页面里现场生成。
 
-为什么不能只用 API：
-  - PAT 调 renew -> 403 common.apiKeyActionForbidden
-  - 空 turnstileToken -> 400 turnstile_failed
-  必须在真浏览器里现场生成 Turnstile token，所以这里用 Playwright 真渲染页面。
-  注意：GitHub Actions 出口是机房 IP，Turnstile 很可能直接上交互式挑战，
-  届时本脚本会明确报错留截图，不要把它当“一定能自动过”的承诺。见同目录 README.md。
-
-环境变量（GitHub Secrets 里配，不要写进文件）：
-  BH_PAT            bh_pat_ 开头串；从 D:/project/.private/accounts.md 的 BlackHost 段复制
-  BH_COOKIE_HEADER  浏览器 Network 里某个 dash 请求的完整 Cookie 头（HAR 里是 cf_clearance /
-                    __Secure-better-auth.state / __Secure-better-auth.session_token / NEXT_LOCALE）
-  BH_PROXY          可选住宅代理 http://user:pass@host:port（让浏览器出口换成住宅 IP）
-  BH_TG_TOKEN / BH_TG_CHAT  可选 Telegram 通知
-产物：artifacts/ 下 before.png / modal.png / after.png + run.log
+环境变量（GitHub Secrets）：BH_PAT / BH_COOKIE_HEADER / BH_TG_TOKEN / BH_TG_CHAT（可选）
+产物：artifacts/ 截图
 """
 import argparse
-import json
 import os
 import sys
 import time
@@ -122,23 +107,11 @@ def do_browser_renew():
         raise RuntimeError("缺少 playwright：pip install playwright && playwright install firefox")
 
     os.makedirs("artifacts", exist_ok=True)
-    proxy_raw = os.environ.get("BH_PROXY", "").strip()
-    launch_opts = {"headless": True}
-    if proxy_raw:
-        # 支持 sing-box 本地 mixed 入口 http://127.0.0.1:18080（无认证）和带认证代理
-        # 形如 http://user:pass@host:port；Playwright 需要分开写 server/username/password
-        from urllib.parse import urlparse
-        u = urlparse(proxy_raw)
-        proxy_cfg = {"server": f"{u.scheme}://{u.hostname}:{u.port}" if u.port else f"{u.scheme}://{u.hostname}"}
-        if u.username and u.password:
-            proxy_cfg = {"server": proxy_cfg["server"], "username": u.username, "password": u.password}
-        launch_opts["proxy"] = proxy_cfg
-        log(f"使用代理出口：{proxy_cfg['server']}（sing-box 本地入口或 BH_PROXY）")
 
     renew_result = {}
 
     with sync_playwright() as p:
-        browser = p.firefox.launch(**launch_opts)
+        browser = p.firefox.launch(headless=True)
         ctx = browser.new_context(
             user_agent=UA,
             viewport={"width": 1366, "height": 768},
