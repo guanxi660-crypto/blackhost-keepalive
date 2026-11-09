@@ -29,8 +29,14 @@ jobs:
           pip install -r github-action/requirements.txt
           python -m playwright install --with-deps firefox
 
+      - name: Probe sing-box secret
+        env:
+          SINGBOX_CONFIG_JSON: ${{ secrets.SINGBOX_CONFIG_JSON }}
+        run: |
+          if [ -n "$SINGBOX_CONFIG_JSON" ]; then echo "HAS_SINGBOX=true" >> "$GITHUB_ENV"; else echo "HAS_SINGBOX=false" >> "$GITHUB_ENV"; fi
+
       - name: Install sing-box
-        if: ${{ secrets.SINGBOX_CONFIG_JSON != '' }}
+        if: env.HAS_SINGBOX == 'true'
         run: |
           mkdir -p /tmp/sing-box
           curl -fsSL https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz \
@@ -38,15 +44,14 @@ jobs:
           /tmp/sing-box/sing-box version
 
       - name: Start sing-box (local mixed inbound 127.0.0.1:18080)
-        if: ${{ secrets.SINGBOX_CONFIG_JSON != '' }}
+        if: env.HAS_SINGBOX == 'true'
         env:
           SINGBOX_CONFIG_JSON: ${{ secrets.SINGBOX_CONFIG_JSON }}
         run: |
-          # 配置含凭证：只写 /tmp，不回显；日志进 artifacts/sing-box.log
+          mkdir -p artifacts
           printf '%s' "$SINGBOX_CONFIG_JSON" > /tmp/sing-box.json
           /tmp/sing-box/sing-box run -c /tmp/sing-box.json > artifacts/sing-box.log 2>&1 &
           sleep 3
-          # 探一下代理真通了：curl -x 走本地 mixed 入口拉自己的出口 IP
           for i in 1 2 3; do
             curl -fsSL --max-time 15 -x http://127.0.0.1:18080 https://api.ipify.org > /tmp/proxy_ip.txt && break || sleep 3
           done
@@ -61,8 +66,7 @@ jobs:
           BH_TG_TOKEN: ${{ secrets.BH_TG_TOKEN }}
           BH_TG_CHAT: ${{ secrets.BH_TG_CHAT }}
         run: |
-          # 优先级：sing-box 已启动时优先用本地 127.0.0.1:18080；没启动则用 BH_PROXY_SECRET
-          # （GITHUB_ENV 的 BH_PROXY 会作为初始值进来，别被空 secret 覆盖）
+          mkdir -p artifacts
           if [ -z "$BH_PROXY" ] && [ -n "$BH_PROXY_SECRET" ]; then
             export BH_PROXY="$BH_PROXY_SECRET"
           fi
