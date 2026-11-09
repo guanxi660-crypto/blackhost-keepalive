@@ -12,10 +12,15 @@
 产物：artifacts/ 截图
 """
 import argparse
+import atexit
+import base64
+import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit, parse_qs, unquote
 
 try:
     from zoneinfo import ZoneInfo
@@ -86,6 +91,147 @@ def parse_cookie_header(raw):
     return jar
 
 
+def parse_node_link(link):
+    """分享链接 -> sing-box outbound 对象。支持 vless/vmess/trojan/hysteria2/tuic/anytls/socks5。"""
+    link = link.strip()
+    scheme = link.split("://", 1)[0].lower()
+    default_port = {"vless": 443, "trojan": 443, "hysteria2": 443, "hy2": 443,
+                    "tuic": 443, "anytls": 443, "socks5": 1080, "socks": 1080}.get(scheme, 443)
+
+    def tls_block(sec, sni, fp, q):
+        t = {"enabled": sec in ("tls", "reality"), "server_name": sni,
+             "insecure": q.get("insecure", q.get("allowInsecure", "")) in ("1", "true"),
+             "utls": {"enabled": True, "fingerprint": fp or "chrome"}}
+        if sec == "reality":
+            t["reality"] = {"enabled": True, "public_key": q.get("pbk", ""), "short_id": q.get("sid", "")}
+        return t
+
+    def transport_block(t, q):
+        t = t or "tcp"
+        if t == "tcp":
+            return None
+        if t == "grpc":
+            return {"type": "grpc", "service_name": unquote(q.get("path", ""))}
+        tr = {"type": t, "path": unquote(q.get("path", "/") or "/")}
+        if q.get("host"):
+            tr["headers"] = {"Host": q["host"]}
+        return tr
+
+    if scheme == "vmess":
+        b64 = link.split("://", 1)[1].strip()
+        b64 += "=" * (-len(b64) % 4)
+        info = json.loads(base64.b64decode(b64).decode("utf-8", "ignore"))
+        out = {"type": "vmess", "server": info.get("add", ""), "server_port": int(info.get("port") or 443),
+               "uuid": info.get("id", ""), "alter_id": int(info.get("aid") or 0), "security": info.get("scy", "auto")}
+        tr = transport_block(info.get("net", "tcp"), {"path": info.get("path", "/"), "host": info.get("host", "")})
+        if tr:
+            out["transport"] = tr
+        if info.get("tls"):
+            out["tls"] = tls_block("tls", info.get("sni") or info.get("host") or info.get("add", ""), info.get("fp"), {})
+        return out if out["server"] else None
+
+    u = urlsplit(link)
+    q = {k: v[0] for k, v in parse_qs(u.query, keep_blank_values=True).items()}
+    server = u.hostname or ""
+    try:
+        port = u.port or default_port
+    except ValueError:
+        port = default_port
+    user = unquote(u.username or "")
+    pwd = unquote(u.password or "")
+    sec = q.get("security", "none")
+    sni = q.get("sni") or (server if sec in ("tls", "reality") else "")
+    fp = q.get("fp", "chrome")
+
+    if scheme == "vless":
+        out = {"type": "vless", "server": server, "server_port": port, "uuid": user, "packet_encoding": "xudp"}
+        if q.get("flow"):
+            out["flow"] = q["flow"]
+        tr = transport_block(q.get("type"), q)
+        if tr:
+            out["transport"] = tr
+        if sec in ("tls", "reality"):
+            out["tls"] = tls_block(sec, sni, fp, q)
+        return out
+
+    if scheme == "trojan":
+        out = {"type": "trojan", "server": server, "server_port": port, "password": user}
+        tr = transport_block(q.get("type"), q)
+        if tr:
+            out["transport"] = tr
+        out["tls"] = tls_block("tls", sni or server, fp, q)
+        return out
+
+    if scheme in ("hysteria2", "hy2"):
+        out = {"type": "hysteria2", "server": server, "server_port": port, "tls": tls_block("tls", q.get("sni") or server, fp, q)}
+        if user:
+            out["password"] = user
+        if q.get("obfs"):
+            out["obfs"] = {"type": "salamander", "password": q["obfs"]}
+        return out
+
+    if scheme == "tuic":
+        out = {"type": "tuic", "server": server, "server_port": port, "uuid": user, "password": pwd,
+               "congestion_control": q.get("congestion_control", "bbr"), "udp_over_stream": True}
+        out["tls"] = tls_block("tls", q.get("sni") or server, fp, q)
+        if q.get("alpn"):
+            out["tls"]["alpn"] = [q["alpn"]]
+        return out
+
+    if scheme == "anytls":
+        out = {"type": "anytls", "server": server, "server_port": port, "password": user}
+        out["tls"] = tls_block("tls", q.get("sni") or server, fp, q)
+        return out
+
+    if scheme in ("socks5", "socks"):
+        out = {"type": "socks", "server": server, "server_port": port, "version": "5"}
+        if user:
+            out["username"] = user
+        if pwd:
+            out["password"] = pwd
+        return out
+
+    return None
+
+
+def start_proxy():
+    """配置了 BH_NODE_LINK 就拉起本地 sing-box（socks5 127.0.0.1:1080），返回 Playwright proxy 配置；没配返回 None。"""
+    link = os.environ.get("BH_NODE_LINK", "").strip()
+    if not link:
+        log("未配置代理节点，直连模式")
+        return None
+    if requests is None:
+        raise RuntimeError("缺少 requests，无法探测代理出口")
+    out = parse_node_link(link)
+    if not out or not out.get("server"):
+        raise RuntimeError("BH_NODE_LINK 无法解析成 sing-box outbound（支持 vless/vmess/trojan/hysteria2/tuic/anytls/socks5）")
+    cfg = {
+        "log": {"level": "warn"},
+        "inbounds": [{"type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 1080}],
+        "outbounds": [out],
+    }
+    with open("sing-box.json", "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False)
+    logf = open("artifacts/sing-box.log", "wb")
+    proc = subprocess.Popen(["./sing-box", "run", "-c", "sing-box.json"],
+                            stdout=logf, stderr=subprocess.STDOUT)
+    atexit.register(proc.terminate)
+    proxy_url = "socks5://127.0.0.1:1080"
+    for _ in range(5):
+        if proc.poll() is not None:
+            break
+        try:
+            r = requests.get("https://api.ipify.org",
+                             proxies={"http": proxy_url, "https": proxy_url}, timeout=10)
+            if r.status_code == 200 and r.text.strip():
+                log(f"代理出口就绪，出口 IP {r.text.strip()}")
+                return {"server": proxy_url}
+        except Exception:
+            pass
+        time.sleep(3)
+    raise RuntimeError(f"sing-box 代理探测失败（进程存活={proc.poll() is None}），看 artifacts/sing-box.log")
+
+
 def do_browser_renew():
     cookie_raw = os.environ.get("BH_COOKIE_HEADER", "").strip()
     if not cookie_raw:
@@ -111,7 +257,11 @@ def do_browser_renew():
     renew_result = {}
 
     with sync_playwright() as p:
-        browser = p.firefox.launch(headless=True)
+        proxy_cfg = start_proxy()
+        launch_opts = {"headless": True}
+        if proxy_cfg:
+            launch_opts["proxy"] = proxy_cfg
+        browser = p.firefox.launch(**launch_opts)
         ctx = browser.new_context(
             user_agent=UA,
             viewport={"width": 1366, "height": 768},

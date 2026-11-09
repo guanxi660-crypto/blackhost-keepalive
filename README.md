@@ -27,6 +27,7 @@ BH_PAT=bh_pat_xxx BH_COOKIE_HEADER="Cookie: ..." PYTHONUTF8=1 python3 renew.py -
 |--------|------|
 | `BH_PAT` | BlackHost PAT（`bh_pat_...`） |
 | `BH_COOKIE_HEADER` | dash 站点完整 Cookie 头（含 `__Secure-better-auth.session_token`） |
+| `BH_NODE_LINK` | 代理分享链接（可选，`vless://` `vmess://` `trojan://` `hysteria2://` `tuic://` `anytls://` `socks5://` 任意一种；不配则直连。机房 IP 会把 Turnstile 升成交互式挑战，干净节点一般回 flexible 自动过） |
 | `BH_TG_TOKEN` / `BH_TG_CHAT` | Telegram 通知（可选） |
 
 时间算法见 [time.txt](./time.txt)。

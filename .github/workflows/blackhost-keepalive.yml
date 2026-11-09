@@ -31,13 +31,33 @@ jobs:
 
       - name: Install deps
         run: |
-          pip install requests playwright
+          pip install requests 'requests[socks]' playwright
           python -m playwright install --with-deps firefox
+
+      # 配了 BH_NODE_LINK（分享链接）才需要 sing-box；renew.py 自己解析链接、生成配置、拉起进程
+      - name: Probe node link secret
+        env:
+          BH_NODE_LINK: ${{ secrets.BH_NODE_LINK }}
+        run: |
+          if [ -n "$BH_NODE_LINK" ]; then
+            echo "HAS_NODELINK=true" >> "$GITHUB_ENV"
+          else
+            echo "HAS_NODELINK=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install sing-box
+        if: env.HAS_NODELINK == 'true'
+        run: |
+          VER=$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '[.[] | select(.prerelease==false)][0].tag_name' | sed 's/^v//')
+          VER=${VER:-1.13.16}
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VER}/sing-box-${VER}-linux-amd64.tar.gz" | tar -xz --strip-components=1
+          ./sing-box version
 
       - name: Renew
         env:
           BH_PAT: ${{ secrets.BH_PAT }}
           BH_COOKIE_HEADER: ${{ secrets.BH_COOKIE_HEADER }}
+          BH_NODE_LINK: ${{ secrets.BH_NODE_LINK }}
           BH_TG_TOKEN: ${{ secrets.BH_TG_TOKEN }}
           BH_TG_CHAT: ${{ secrets.BH_TG_CHAT }}
         run: |
