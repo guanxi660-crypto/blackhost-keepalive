@@ -1,76 +1,52 @@
 # BlackHost 免费服保活
 
-## 本地监控
+## 窗口对齐续期
 
-1. 安装依赖：
+按钮 `Przedłuż o 8h` 可用时才点：先用 PAT 算剩余，剩不到 2h 才拉起真浏览器去点它续期。
 
-```bash
-python3 -m pip install requests
+Actions 定时：
+
+```yaml
+- cron: "28 */6 * * *"
 ```
 
-2. 在项目目录新建 `.env`：
+手动跑一次（强制点按钮）：
 
 ```bash
-BH_PAT=bh_pat_xxx
-BH_TG_TOKEN=你的 Bot Token
-BH_TG_CHAT=你的 Chat ID
+BH_PAT=bh_pat_xxx BH_COOKIE_HEADER="Cookie: ..." PYTHONUTF8=1 python3 github-action/renew_browser.py --force
 ```
 
-3. 直接运行：
+通过标准：日志出现 `🎉 续期成功`，`status=ready`。
 
-```bash
-PYTHONUTF8=1 python3 blackhost-keepalive.py --monitor
-```
+## GitHub Actions 用法
 
-默认轮询 3 小时，剩余不足 7 小时或已挂起时发送 Telegram 告警。需要常驻可用 cron 定时拉起 `--check`，或自行编写 systemd 单元。
+工作流位于 `.github/workflows/blackhost-keepalive.yml`。
 
-## 手动续期
-
-告警后在浏览器里操作一次：
-
-1. 打开 `https://dash.blackhost.pl/game/<SERVER_ID>`
-2. 点击续期按钮，过完 Cloudflare Turnstile
-3. 打开浏览器开发者工具 → Network，找到 `POST /api/v1/servers/game/free/renew`，复制请求体里的 `turnstileToken`
-4. 在服务器执行：
-
-```bash
-python3 blackhost-keepalive.py --renew \
-  --har "/path/to/dash.blackhost.pl_Archive.har" \
-  --turnstile "你复制的 turnstileToken"
-```
-
-续期后脚本会立即用 PAT 复查新的到期时间。
-
-Cookie 和 token 只用于这一次提交，不写入日志。
-
-## GitHub Actions 强制重启
-
-Actions 版位于 `github-action/`，工作流位于 `.github/workflows/blackhost-keepalive.yml`，定时触发停止 → 开始流程。
-
-仓库 `Settings → Secrets and variables → Actions` 需要配置：
+仓库 `Settings → Secrets and variables → Actions` 配置：
 
 | Secret | 内容 |
 |--------|------|
 | `BH_PAT` | BlackHost PAT（`bh_pat_...`） |
+| `BH_COOKIE_HEADER` | dash 站点完整 Cookie 头 |
+| `SINGBOX_CONFIG_JSON` | sing-box 配置（见 `github-action/sing-box.client.example.json`） |
 | `BH_TG_TOKEN` / `BH_TG_CHAT` | Telegram 通知（可选） |
 
-详细配置见 [github-action/README.md](./github-action/README.md)。
+详细配置见 [github-action/README.md](./github-action/README.md)，时间算法见 [time.txt](./time.txt)。
+
+## 手动续期
+
+1. 打开 `https://dash.blackhost.pl/game/<SERVER_ID>`
+2. 点击续期按钮，过完 Turnstile
+3. 浏览器复制 `POST /api/v1/servers/game/free/renew` 的 `turnstileToken`
+4. 在服务器执行 `blackhost-keepalive.py --renew --har <HAR> --turnstile <TOKEN>`
 
 ## 常用命令
 
 ```bash
-# 单轮检查
 python3 blackhost-keepalive.py --check
-
-# 常驻监控
 python3 blackhost-keepalive.py --monitor
-
-# 强制停止/开始
-BH_PAT=bh_pat_xxx PYTHONUTF8=1 python3 github-action/power_cycle.py
 ```
 
 ## 注意事项
 
-- 时间算法见 [time.txt](./time.txt)。
-- 停止/开始不会延长到期时间；真正延期要靠 Turnstile 那步。
-- 不要把真实 PAT、Cookie、sing-box 凭证提交到仓库。
+- 不要把真实 PAT、Cookie、凭证提交到仓库。

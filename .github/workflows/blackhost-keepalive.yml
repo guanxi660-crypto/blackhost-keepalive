@@ -1,16 +1,21 @@
 name: blackhost-keepalive
 
-# 按会话到期点对齐：当前到期 12:28:45Z，续期窗口在到期前 2h（10:28:45Z）开启；
-# 窗口内续期 +8h，下一个窗口 = +6h，所以 cron 固定在 :28 每 6 小时
+# 窗口对齐：到期 12:28:45Z，剩不到 2h 开启（10:28:45Z），cron :28 每 6 小时落在窗口开点
 on:
   schedule:
     - cron: "28 */6 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "无视 2 小时窗口直接跑浏览器（调试用）"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   keepalive:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -20,11 +25,58 @@ jobs:
           python-version: "3.11"
 
       - name: Install deps
-        run: pip install requests
+        run: |
+          pip install -r github-action/requirements.txt
+          python -m playwright install --with-deps firefox
 
-      - name: Force power cycle (stop -> start)
+      - name: Install sing-box
+        if: ${{ secrets.SINGBOX_CONFIG_JSON != '' }}
+        run: |
+          mkdir -p /tmp/sing-box
+          curl -fsSL https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz \
+            | tar -xz --strip-components=1 -C /tmp/sing-box
+          /tmp/sing-box/sing-box version
+
+      - name: Start sing-box (local mixed inbound 127.0.0.1:18080)
+        if: ${{ secrets.SINGBOX_CONFIG_JSON != '' }}
+        env:
+          SINGBOX_CONFIG_JSON: ${{ secrets.SINGBOX_CONFIG_JSON }}
+        run: |
+          # 配置含凭证：只写 /tmp，不回显；日志进 artifacts/sing-box.log
+          printf '%s' "$SINGBOX_CONFIG_JSON" > /tmp/sing-box.json
+          /tmp/sing-box/sing-box run -c /tmp/sing-box.json > artifacts/sing-box.log 2>&1 &
+          sleep 3
+          # 探一下代理真通了：curl -x 走本地 mixed 入口拉自己的出口 IP
+          for i in 1 2 3; do
+            curl -fsSL --max-time 15 -x http://127.0.0.1:18080 https://api.ipify.org > /tmp/proxy_ip.txt && break || sleep 3
+          done
+          if [ -s /tmp/proxy_ip.txt ]; then echo "sing-box exit ip: $(cat /tmp/proxy_ip.txt)"; else echo "proxy probe failed"; cat artifacts/sing-box.log; exit 1; fi
+          echo "BH_PROXY=http://127.0.0.1:18080" >> "$GITHUB_ENV"
+
+      - name: Run keepalive
         env:
           BH_PAT: ${{ secrets.BH_PAT }}
+          BH_COOKIE_HEADER: ${{ secrets.BH_COOKIE_HEADER }}
+          BH_PROXY_SECRET: ${{ secrets.BH_PROXY }}
           BH_TG_TOKEN: ${{ secrets.BH_TG_TOKEN }}
           BH_TG_CHAT: ${{ secrets.BH_TG_CHAT }}
-        run: python github-action/power_cycle.py
+        run: |
+          # 优先级：sing-box 已启动时优先用本地 127.0.0.1:18080；没启动则用 BH_PROXY_SECRET
+          # （GITHUB_ENV 的 BH_PROXY 会作为初始值进来，别被空 secret 覆盖）
+          if [ -z "$BH_PROXY" ] && [ -n "$BH_PROXY_SECRET" ]; then
+            export BH_PROXY="$BH_PROXY_SECRET"
+          fi
+          if [ -n "$BH_PROXY" ]; then echo "browser proxy: $BH_PROXY"; else echo "browser proxy: direct"; fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python github-action/renew_browser.py --force
+          else
+            python github-action/renew_browser.py
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackhost-keepalive-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: ignore
