@@ -1,39 +1,27 @@
-# GitHub Actions 真浏览器续期
+# 窗口对齐强制重启版
 
-先用 PAT 查到期时间，剩不到 2 小时或已挂起才拉起浏览器续期。
+当前到期 `12:28:45Z`、剩余 3h15m，窗口 `10:28:45Z` 开启（剩不到 2h）。cron `28 */6 * * *`（UTC :28 每 6 小时）：窗口内续期 +8h，下一个窗口 +6h。
 
 ## 文件
 
 | 文件 | 作用 |
 |------|------|
-| `.github/workflows/blackhost-keepalive.yml` | 定时触发（每 20 分钟），也可手动运行 |
-| `github-action/renew_browser.py` | PAT 检查 + 浏览器续期 |
-| `github-action/requirements.txt` | Python 依赖 |
-| `github-action/sing-box.client.example.json` | sing-box 配置模板 |
+| `.github/workflows/blackhost-keepalive.yml` | `28 */6 * * *` 定时触发 |
+| `github-action/power_cycle.py` | 停止 → 轮询停止 → 开始 → 轮询运行，窗口对齐 |
+| `github-action/renew_browser.py` | 备用：Turnstile 续期版（手动用，不在定时里） |
 
-## Secrets 配置
-
-仓库 `Settings → Secrets and variables → Actions` 配置：
+## Secrets
 
 | Secret | 内容 |
 |--------|------|
-| `BH_PAT` | BlackHost PAT（`bh_pat_...`） |
-| `BH_COOKIE_HEADER` | dash 站点完整 Cookie 头 |
-| `SINGBOX_CONFIG_JSON` | sing-box 客户端配置 JSON，按模板填写后整段贴入 |
-| `BH_PROXY` | 普通 HTTP 代理（未启用 sing-box 时用） |
+| `BH_PAT` | BlackHost PAT |
 | `BH_TG_TOKEN` / `BH_TG_CHAT` | Telegram 通知（可选） |
 
-sing-box 启用后，浏览器走本地 `http://127.0.0.1:18080` 出口；不启用时走 `BH_PROXY`；都不填则直连。
+## 手动触发
 
-## 运行
+Actions 页点 `blackhost-keepalive` → Run workflow 即可。
 
-1. 在仓库 Actions 页手动运行一次工作流（可勾 `force=true` 强制跑浏览器）
-2. 到期前看运行日志确认代理出口 IP 和 PAT 检查结果
-3. 失败时下载 `artifacts/` 里的截图排查：`before.png`、`modal.png`、`after_turnstile.png`、`sing-box.log`
+## 说明
 
-## 注意事项
-
-- 续期只能在剩余不到 2 小时或已挂起时操作。
-- Turnstile 有效期约 5 分钟，token 必须现取现用。
-- 会话 Cookie 过期后需要重新登录并更新 `BH_COOKIE_HEADER`。
-- 不要把真实 PAT、Cookie、sing-box 凭证提交到仓库。
+- 停止/开始不会延长到期时间（已实测，`active_until` 不变）；到期临近时仍需手动走 Turnstile 续期。
+- 免费服窗口内操作，剩下不到 2 小时时重启后建议尽快补续期。
