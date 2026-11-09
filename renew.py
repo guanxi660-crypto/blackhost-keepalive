@@ -196,21 +196,12 @@ def parse_node_link(link):
     return None
 
 
-def start_proxy():
-    """配置了 BH_NODE_LINK 就拉起本地 sing-box（socks5 127.0.0.1:1080），返回 Playwright proxy 配置；没配返回 None。"""
-    link = os.environ.get("BH_NODE_LINK", "").strip()
-    if not link:
-        log("未配置代理节点，直连模式")
-        return None
-    if requests is None:
-        raise RuntimeError("缺少 requests，无法探测代理出口")
-    out = parse_node_link(link)
-    if not out or not out.get("server"):
-        raise RuntimeError("BH_NODE_LINK 无法解析成 sing-box outbound（支持 vless/vmess/trojan/hysteria2/tuic/anytls/socks5）")
+def _spawn_and_probe(outbound):
+    """按给定 outbound 拉起 sing-box 并探测出口，成功返回 proxy 配置，失败返回 None。"""
     cfg = {
         "log": {"level": "warn"},
         "inbounds": [{"type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 1080}],
-        "outbounds": [out],
+        "outbounds": [outbound],
     }
     with open("sing-box.json", "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False)
@@ -219,9 +210,10 @@ def start_proxy():
                             stdout=logf, stderr=subprocess.STDOUT)
     atexit.register(proc.terminate)
     proxy_url = "socks5://127.0.0.1:1080"
-    for _ in range(5):
+    for _ in range(3):
         if proc.poll() is not None:
-            break
+            proc.terminate()
+            return None
         try:
             r = requests.get("https://api.ipify.org",
                              proxies={"http": proxy_url, "https": proxy_url}, timeout=10)
@@ -231,7 +223,54 @@ def start_proxy():
         except Exception:
             pass
         time.sleep(3)
-    raise RuntimeError(f"sing-box 代理探测失败（进程存活={proc.poll() is None}），看 artifacts/sing-box.log")
+    # 失败要杀掉进程，否则重试时 1080 端口被占，第二个 sing-box 起不来
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except Exception:
+        proc.kill()
+    return None
+
+
+def _force_insecure(outbound):
+    """递归把 outbound 里的 tls.insecure 全部置 true（节点证书只有 CN 无 SAN 时 Go 会拒）。"""
+    if isinstance(outbound, dict):
+        if "server_name" in outbound and "enabled" in outbound:
+            outbound["insecure"] = True
+        for v in outbound.values():
+            _force_insecure(v)
+    elif isinstance(outbound, list):
+        for v in outbound:
+            _force_insecure(v)
+
+
+def start_proxy():
+    """配置了 BH_NODE_LINK 就拉起本地 sing-box（socks5 127.0.0.1:1080），返回 Playwright proxy 配置；没配返回 None。
+
+    先按链接原样连；失败则自动 insecure 重试一次（免费节点证书经常只有 CN 没有 SAN）。
+    """
+    link = os.environ.get("BH_NODE_LINK", "").strip()
+    if not link:
+        log("未配置代理节点，直连模式")
+        return None
+    if requests is None:
+        raise RuntimeError("缺少 requests，无法探测代理出口")
+    out = parse_node_link(link)
+    if not out or not out.get("server"):
+        raise RuntimeError("BH_NODE_LINK 无法解析成 sing-box outbound（支持 vless/vmess/trojan/hysteria2/tuic/anytls/socks5）")
+
+    result = _spawn_and_probe(out)
+    if result:
+        return result
+
+    forced = json.loads(json.dumps(out))
+    _force_insecure(forced)
+    log("节点直连失败，改用 insecure 模式重试")
+    result = _spawn_and_probe(forced)
+    if result:
+        return result
+
+    raise RuntimeError("sing-box 代理探测失败（原样 + insecure 都不通），看 artifacts/sing-box.log")
 
 
 def do_browser_renew():
