@@ -18,6 +18,10 @@ jobs:
   keepalive:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # GITHUB_TOKEN 默认只读，删运行记录需要 actions:write
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
