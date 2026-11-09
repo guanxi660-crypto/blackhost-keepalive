@@ -86,3 +86,23 @@ jobs:
           name: blackhost-keepalive-${{ github.run_id }}
           path: artifacts/
           if-no-files-found: ignore
+
+      # 只留最近一条运行记录，其余删掉（省 Actions 历史，防堆 96 条/天的 15 分钟轮询）
+      - name: Prune old workflow runs
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KEEP=${{ github.run_id }}
+          page=1
+          while : ; do
+            ids=$(gh api "repos/${{ github.repository }}/actions/runs?per_page=100&page=$page" \
+              --jq ".workflow_runs[] | select(.id != $KEEP) | .id")
+            [ -z "$ids" ] && break
+            for id in $ids; do
+              gh api -X DELETE "repos/${{ github.repository }}/actions/runs/$id" >/dev/null 2>&1 || true
+            done
+            page=$((page+1))
+            [ "$page" -gt 5 ] && break
+          done
+          echo "pruned, kept run $KEEP"
